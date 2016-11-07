@@ -1,0 +1,7 @@
+node {
+    checkout scm
+    jobDsl targets: 'pipeline-memory-leak/seeder.groovy',
+           removedJobAction: 'DELETE',
+           removedViewAction: 'DELETE',
+           lookupStrategy: 'SEED_JOB'
+}

@@ -1,0 +1,172 @@
+= [Solved] Memory leak with Pipelines
+
+Problem solved with https://wiki.jenkins-ci.org/display/JENKINS/Pipeline+Groovy+Plugin[Pipeline Groovy Plugin] version 2.23.
+Also see https://groups.google.com/d/msg/jenkinsci-dev/mzPx8qFrNcM/QVJ5Qk9xAwAJ[Jenkins-dev].
+
+== What happens?
+
+We run into memory issues on our Jenkins master, it needs to be restarted after at most a week. We make intensive use of pipelines.
+
+At first, the easy way out was to increase the heap available to our master, meanwhile we've reached `-Xmx48g`.
+Last week it only "survived" 3 days. There are about 60 agents (2 executors each) handling more than 1200 pipeline jobs.
+
+== Analysis
+
+Our Jenkins master is running on Windows Server 2012, using a 64Bit Oracle JVM (1.8.0_112).
+
+These are the plugins we're running on our test instance (Jenkins 2.19.1):
+
+  ace-editor                       JavaScript GUI Lib: ACE Editor bundle plugin                     1.1
+  ant                              Ant Plugin                                                       1.4
+  antisamy-markup-formatter        OWASP Markup Formatter Plugin                                    1.5
+  authentication-tokens            Authentication Tokens API Plugin                                 1.3
+  bouncycastle-api                 bouncycastle API Plugin                                          2.16.0
+  branch-api                       Branch API Plugin                                                1.11 (1.11.1)
+  build-timeout                    build timeout plugin                                             1.17.1
+  cloudbees-folder                 Folders Plugin                                                   5.13
+  conditional-buildstep            Conditional BuildStep                                            1.3.5
+  copyartifact                     Copy Artifact Plugin                                             1.38.1
+  credentials-binding              Credentials Binding Plugin                                       1.9
+  credentials                      Credentials Plugin                                               2.1.8
+  custom-tools-plugin              Custom Tools Plugin                                              0.4.4
+  display-url-api                  Display URL API                                                  0.5
+  docker-commons                   Docker Commons Plugin                                            1.5
+  docker-workflow                  CloudBees Docker Pipeline                                        1.9
+  durable-task                     Durable Task Plugin                                              1.12
+  email-ext                        Email Extension Plugin                                           2.52
+  envinject                        Environment Injector Plugin                                      1.93.1
+  extended-choice-parameter        Extended Choice Parameter Plug-In                                0.75
+  external-monitor-job             External Monitor Job Type Plugin                                 1.6
+  extra-tool-installers            Extra Tool Installers Plugin                                     0.3
+  gerrit-trigger                   Gerrit Trigger                                                   2.22.0
+  git-client                       Git client plugin                                                2.0.0 (2.1.0)
+  git-server                       GIT server Plugin                                                1.7
+  git                              Git plugin                                                       3.0.0
+  github-api                       GitHub API Plugin                                                1.79
+  github-branch-source             GitHub Branch Source Plugin                                      1.10
+  github                           GitHub plugin                                                    1.22.3 (1.22.4)
+  handlebars                       JavaScript GUI Lib: Handlebars bundle plugin                     1.1.1
+  icon-shim                        Icon Shim Plugin                                                 2.0.3
+  jackson2-api                     Jackson 2 API Plugin                                             2.7.3
+  javadoc                          Javadoc Plugin                                                   1.4
+  job-dsl                          Job DSL                                                          1.52
+  jquery-detached                  JavaScript GUI Lib: jQuery bundles (jQuery and jQuery UI) plugin 1.2.1
+  jquery                           jQuery plugin                                                    1.11.2-0
+  junit                            JUnit Plugin                                                     1.19
+  ldap                             LDAP Plugin                                                      1.13
+  locale                           Locale plugin                                                    1.2
+  mailer                           Mailer Plugin                                                    1.18
+  mapdb-api                        MapDB API Plugin                                                 1.0.9.0
+  mask-passwords                   Mask Passwords Plugin                                            2.8
+  matrix-auth                      Matrix Authorization Strategy Plugin                             1.4
+  matrix-project                   Matrix Project Plugin                                            1.7.1
+  maven-plugin                     Maven Integration plugin                                         2.13 (2.14)
+  metrics                          Metrics Plugin                                                   3.1.2.9
+  momentjs                         JavaScript GUI Lib: Moment.js bundle plugin                      1.1.1
+  monitoring                       Monitoring                                                       1.62.0
+  multi-slave-config-plugin        Multi slave config plugin                                        1.2.0
+  pam-auth                         PAM Authentication plugin                                        1.3
+  parameterized-trigger            Parameterized Trigger plugin                                     2.32
+  pipeline-build-step              Pipeline: Build Step                                             2.3
+  pipeline-graph-analysis          Pipeline Graph Analysis Plugin                                   1.2
+  pipeline-input-step              Pipeline: Input Step                                             2.3
+  pipeline-milestone-step          Pipeline: Milestone Step                                         1.1
+  pipeline-model-api               Pipeline: Model API                                              0.5
+  pipeline-model-declarative-agent Pipeline: Declarative Agent API                                  0.5
+  pipeline-model-definition        Pipeline: Model Definition                                       0.5
+  pipeline-rest-api                Pipeline: REST API Plugin                                        2.2
+  pipeline-stage-step              Pipeline: Stage Step                                             2.2
+  pipeline-stage-view              Pipeline: Stage View Plugin                                      2.2
+  pipeline-utility-steps           Pipeline Utility Steps                                           1.1.6
+  plain-credentials                Plain Credentials Plugin                                         1.3
+  role-strategy                    Role-based Authorization Strategy                                2.3.2
+  run-condition                    Run Condition Plugin                                             1.0
+  scm-api                          SCM API Plugin                                                   1.3
+  script-security                  Script Security Plugin                                           1.24
+  scriptler                        Scriptler                                                        2.9
+  secure-requester-whitelist       Secure Requester Whitelist Plugin                                1.0
+  sse-gateway                      Server Sent Events (SSE) Gateway Plugin                          1.10
+  ssh-credentials                  SSH Credentials Plugin                                           1.12
+  structs                          Structs Plugin                                                   1.5
+  subversion                       Subversion Plug-in                                               2.7.1
+  token-macro                      Token Macro Plugin                                               2.0
+  windows-slaves                   Windows Slaves Plugin                                            1.2
+  workflow-aggregator              Pipeline                                                         2.4
+  workflow-api                     Pipeline: API                                                    2.5
+  workflow-basic-steps             Pipeline: Basic Steps                                            2.3
+  workflow-cps-global-lib          Pipeline: Shared Groovy Libraries                                2.4
+  workflow-cps                     Pipeline: Groovy                                                 2.22
+  workflow-durable-task-step       Pipeline: Nodes and Processes                                    2.5
+  workflow-job                     Pipeline: Job                                                    2.8
+  workflow-multibranch             Pipeline: Multibranch                                            2.9
+  workflow-scm-step                Pipeline: SCM Step                                               2.2
+  workflow-step-api                Pipeline: Step API                                               2.5
+  workflow-support                 Pipeline: Supporting APIs                                        2.10
+
+The problems seems to be that Groovy classes are not GCed. The number of classes loaded keeps increasing
+as does the amount of heap used. You can see the amount of heap not being freed is steadily increasing:
+
+image::images\README-08f6e.png[]
+
+The histogram shows a large number of Groovy related objects (about 30000 classes were loaded at the time):
+
+  num     #instances         #bytes  class name
+  ----------------------------------------------
+    1:        585588      169021176  [C
+    2:       2476556      138687136  org.codehaus.groovy.runtime.metaclass.MetaMethodIndex$Entry
+    3:       2211729       73551224  [Ljava.lang.Object;
+    4:         82884       70610816  [B
+    5:       1612434       38698416  org.codehaus.groovy.util.FastArray
+    6:        730163       23365216  java.util.HashMap$Node
+    7:        156549       22609616  [Lorg.codehaus.groovy.util.ComplexKeyHashMap$Entry;
+    8:        247831       21809128  java.lang.reflect.Method
+    9:        522331       16714592  org.codehaus.groovy.util.SingleKeyHashMap$Entry
+   10:          7956       15999552  [Lorg.codehaus.groovy.runtime.metaclass.MetaMethodIndex$Entry;
+   ...
+
+We can reproduce this with a minimal pipeline script, see next section.
+
+== Reproducing the Issue
+
+I set up a repository with some files I used to reproduce this issue. Here's how:
+
+. Prepare a Jenkins master with the latest pipeline plugins, JobDSL, CloudBees folders installed (see above for the full list I used)
+. Make sure you have 1 or more slaves that can handle the load
+. Create a new pipeline job, running `pipeline-memory-leak/Jenkinsfile`. It needs to define a boolean parameter `enableTrigger`
+. Run it
+. It will generate 200 test jobs which run once a minute.
+
+As the test pipelines are executed, you can see the number of classes growing, as well as heap usage.
+
+When running the Jenkins master with -Xmx3g, it does not take long for it to become unresponsive.
+
+After about 6 minutes, my test instance already grew from about 12k classes to 22k:
+
+image::images\README-6f73f.png[]
+
+And reached 30k after about 15 minutes:
+
+image::images\README-8fe27.png[]
+
+Garbage collection happens, but Groovy classes are not being unloaded.
+
+While there's still some free heap space now, this will run into a garbage collector loop at some point.
+
+We've reached a "flat line" after a little more than 1 hour, the Jenkins master is dead now:
+
+image::images\README-ef7fd.png[]
+
+== What we tried
+
+* [x] Updated all plugins to their latest version. Did not help
+* [x] Set -Dgroovy.use.classvalue=true, as reported in JENKINS-33358. Did not help. Double-checked ;). It really does not help.
+* [x] Limit the size of Metaspace (-XX:MaxMetaspaceSize=200000000). Did not help. It forced unloading of classes when reaching the limit. At that point Jenkins became unusable (no response, no more builds scheduled)
+* [x] Updated to latest Java Version: 1.8.0_112. Did not help
+* [x] Added -XX:+CMSClassUnloadingEnabled (kind of a desperate move...). Did not help
+
+= Resources
+
+We found some issues reporting similar problems:
+
+* https://issues.jenkins-ci.org/browse/JENKINS-33358
+* https://issues.jenkins-ci.org/browse/JENKINS-32338
